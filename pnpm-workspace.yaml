@@ -1,0 +1,8 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@mantine/core@9.6.3'
+  - '@mantine/hooks@9.6.3'

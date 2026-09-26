@@ -1,0 +1,110 @@
+import { z } from 'zod';
+
+// Client -> Server
+export const JoinMessageSchema = z.object({
+  type: z.literal('join'),
+  roomId: z.string().min(1),
+  peerId: z.string().min(1),
+});
+export type JoinMessage = z.infer<typeof JoinMessageSchema>;
+
+export const SignalRelayMessageSchema = z.object({
+  type: z.literal('signal'),
+  target: z.string().min(1),
+  data: z.record(z.unknown()).or(z.any()),
+});
+export type SignalRelayMessage = z.infer<typeof SignalRelayMessageSchema>;
+
+export const ClientMessageSchema = z.discriminatedUnion('type', [
+  JoinMessageSchema,
+  SignalRelayMessageSchema,
+]);
+export type ClientMessage = z.infer<typeof ClientMessageSchema>;
+
+// Server -> Client
+export const PeersMessageSchema = z.object({
+  type: z.literal('peers'),
+  peers: z.array(z.string()),
+  count: z.number().int().nonnegative(),
+});
+export type PeersMessage = z.infer<typeof PeersMessageSchema>;
+
+export const PeerJoinedMessageSchema = z.object({
+  type: z.literal('peer-joined'),
+  peerId: z.string(),
+  count: z.number().int().positive(),
+});
+export type PeerJoinedMessage = z.infer<typeof PeerJoinedMessageSchema>;
+
+export const PeerLeftMessageSchema = z.object({
+  type: z.literal('peer-left'),
+  peerId: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type PeerLeftMessage = z.infer<typeof PeerLeftMessageSchema>;
+
+export const RelayedSignalMessageSchema = z.object({
+  type: z.literal('signal'),
+  from: z.string(),
+  data: z.record(z.unknown()).or(z.any()),
+});
+export type RelayedSignalMessage = z.infer<typeof RelayedSignalMessageSchema>;
+
+export const ErrorMessageSchema = z.object({
+  type: z.literal('error'),
+  message: z.string(),
+});
+export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
+
+export const ServerMessageSchema = z.discriminatedUnion('type', [
+  PeersMessageSchema,
+  PeerJoinedMessageSchema,
+  PeerLeftMessageSchema,
+  RelayedSignalMessageSchema,
+  ErrorMessageSchema,
+]);
+export type ServerMessage = z.infer<typeof ServerMessageSchema>;
+
+export const OfferSignalPayloadSchema = z.object({
+  type: z.literal('offer'),
+  sdp: z.unknown(),
+});
+export type OfferSignalPayload = z.infer<typeof OfferSignalPayloadSchema>;
+
+export const AnswerSignalPayloadSchema = z.object({
+  type: z.literal('answer'),
+  sdp: z.unknown(),
+});
+export type AnswerSignalPayload = z.infer<typeof AnswerSignalPayloadSchema>;
+
+export const IceSignalPayloadSchema = z.object({
+  type: z.literal('ice'),
+  candidate: z.unknown(),
+});
+export type IceSignalPayload = z.infer<typeof IceSignalPayloadSchema>;
+
+export type SignalPayload =
+  | OfferSignalPayload
+  | AnswerSignalPayload
+  | IceSignalPayload
+  | { type: string; [key: string]: unknown };
+
+export function isOfferSignal(data: unknown): data is OfferSignalPayload {
+  return typeof data === 'object' && data !== null && (data as any).type === 'offer';
+}
+
+export function isAnswerSignal(data: unknown): data is AnswerSignalPayload {
+  return typeof data === 'object' && data !== null && (data as any).type === 'answer';
+}
+
+export function isIceSignal(data: unknown): data is IceSignalPayload {
+  return typeof data === 'object' && data !== null && (data as any).type === 'ice';
+}
+
+export function isClientMessage(data: unknown): data is ClientMessage {
+  return ClientMessageSchema.safeParse(data).success;
+}
+
+export function isServerMessage(data: unknown): data is ServerMessage {
+  return ServerMessageSchema.safeParse(data).success;
+}

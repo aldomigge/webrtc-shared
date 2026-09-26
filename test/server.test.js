@@ -3,17 +3,31 @@ import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { createSignalServer } from '../server.js';
 
-function nextMessage(socket) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Mensagem não recebida')), 1000);
-    socket.once('message', (data) => { clearTimeout(timer); resolve(JSON.parse(data)); });
-  });
-}
 function connect(url) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
+    const queue = [];
+    const waiters = [];
+    socket.on('message', (data) => {
+      const parsed = JSON.parse(data.toString());
+      if (waiters.length > 0) {
+        waiters.shift()(parsed);
+      } else {
+        queue.push(parsed);
+      }
+    });
+    socket._nextMessage = () => {
+      if (queue.length > 0) return Promise.resolve(queue.shift());
+      return new Promise((res, rej) => {
+        const timer = setTimeout(() => rej(new Error('Mensagem não recebida')), 1000);
+        waiters.push((msg) => { clearTimeout(timer); res(msg); });
+      });
+    };
     socket.once('open', () => resolve(socket)); socket.once('error', reject);
   });
+}
+function nextMessage(socket) {
+  return socket._nextMessage();
 }
 
 test('signal server reports presence count and only existing peers receive peer-joined', async (t) => {
@@ -39,6 +53,8 @@ test('signal server relays targeted signaling data', async (t) => {
   t.after(() => [host, viewer].forEach((socket) => socket.close()));
   host.send(JSON.stringify({ type: 'join', roomId: 'relay', peerId: 'host' })); await nextMessage(host);
   viewer.send(JSON.stringify({ type: 'join', roomId: 'relay', peerId: 'viewer' })); await nextMessage(viewer); await nextMessage(host);
-  const offer = { type: 'signal', target: 'viewer', data: { type: 'offer', sdp: 'fake' } }; host.send(JSON.stringify(offer));
-  assert.deepEqual(await nextMessage(viewer), { type: 'signal', from: 'host', data: offer.data });
+  const offer = { type: 'signal', target: 'viewer', data: { type: 'offer', sdp: 'fake' } };
+  const received = nextMessage(viewer);
+  host.send(JSON.stringify(offer));
+  assert.deepEqual(await received, { type: 'signal', from: 'host', data: offer.data });
 });

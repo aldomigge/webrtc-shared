@@ -1,0 +1,259 @@
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { WebSocketServer, WebSocket } from 'ws';
+import { RoomRegistry } from './room-state.js';
+import { turnCredentials } from './turn.js';
+import type { ServerMessage } from '@screen-room/protocol';
+
+export { turnCredentials };
+
+export interface SignalSocketMeta {
+  roomId: string;
+  peerId: string;
+}
+
+export type SignalWebSocket = WebSocket & {
+  meta?: SignalSocketMeta | null;
+};
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const defaultPublicDir = path.resolve(here, '../../../public');
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+};
+
+function signalLog(event: string, fields: Record<string, unknown> = {}) {
+  console.log(`[screen-room:signal] ${event}`, fields);
+}
+
+function send(socket: WebSocket | undefined, message: ServerMessage | Record<string, unknown>) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(message));
+  }
+}
+
+export interface SignalServerOptions {
+  port?: number;
+  host?: string;
+  publicDir?: string;
+  allowedOrigins?: string[];
+}
+
+export function parseAllowedOrigins(optionsOrigins?: string[]): string[] {
+  if (optionsOrigins && optionsOrigins.length > 0) {
+    return optionsOrigins.map((o) => o.trim().toLowerCase());
+  }
+  const env = process.env.ALLOWED_ORIGINS;
+  if (env) {
+    return env.split(',').map((o) => o.trim().toLowerCase()).filter(Boolean);
+  }
+  return [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+  ];
+}
+
+export function isAllowedOrigin(
+  origin: string | undefined,
+  hostHeader: string | undefined,
+  allowedList: string[]
+): boolean {
+  if (!origin) return true;
+  const normalized = origin.trim().toLowerCase();
+  if (hostHeader) {
+    const host = hostHeader.toLowerCase();
+    if (normalized === `http://${host}` || normalized === `https://${host}`) {
+      return true;
+    }
+  }
+  return allowedList.includes(normalized);
+}
+
+export interface SignalServerInstance {
+  ready: Promise<void>;
+  readonly port: number;
+  httpServer: http.Server;
+  wss: WebSocketServer;
+  close: () => Promise<void>;
+}
+
+export function createSignalServer({
+  port = 3000,
+  host = '0.0.0.0',
+  publicDir = defaultPublicDir,
+  allowedOrigins,
+}: SignalServerOptions = {}): SignalServerInstance {
+  const rooms = new RoomRegistry();
+  const clients = new Map<string, SignalWebSocket>();
+  const allowedList = parseAllowedOrigins(allowedOrigins);
+
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const origin = req.headers.origin;
+
+    if (req.method === 'OPTIONS') {
+      if (!isAllowedOrigin(origin, req.headers.host, allowedList)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden origin');
+        return;
+      }
+      const headers: Record<string, string> = {
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Vary': 'Origin',
+      };
+      if (origin) {
+        headers['Access-Control-Allow-Origin'] = origin;
+      }
+      res.writeHead(204, headers);
+      res.end();
+      return;
+    }
+
+    if (url.pathname === '/turn-credentials') {
+      if (!isAllowedOrigin(origin, req.headers.host, allowedList)) {
+        signalLog('rejected-http-origin', { origin, host: req.headers.host });
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden origin');
+        return;
+      }
+      const payload = JSON.stringify(turnCredentials());
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Vary': 'Origin',
+      };
+      if (origin) {
+        headers['Access-Control-Allow-Origin'] = origin;
+      }
+      res.writeHead(200, headers);
+      res.end(payload);
+      return;
+    }
+
+    let pathname = url.pathname === '/' ? '/index.html' : url.pathname;
+    pathname = path.normalize(pathname).replace(/^([.][.][\\/])+/, '');
+    const file = path.join(publicDir, pathname);
+    if (!file.startsWith(publicDir)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+
+    try {
+      const body = await readFile(file);
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+      res.end(body);
+    } catch {
+      res.writeHead(404);
+      res.end('Not found');
+    }
+  });
+
+  const wss = new WebSocketServer({ server: httpServer, path: '/signal' });
+
+  function peerSocket(roomId: string, peerId: string): SignalWebSocket | undefined {
+    return clients.get(`${roomId}:${peerId}`);
+  }
+
+  function broadcast(roomId: string, message: ServerMessage, exceptPeer?: string) {
+    for (const peerId of rooms.peers(roomId)) {
+      if (peerId !== exceptPeer) {
+        send(peerSocket(roomId, peerId), message);
+      }
+    }
+  }
+
+  function depart(socket: SignalWebSocket) {
+    if (!socket.meta) return;
+    const { roomId, peerId } = socket.meta;
+    clients.delete(`${roomId}:${peerId}`);
+    rooms.leave(roomId, peerId);
+    const count = rooms.peers(roomId).length;
+    signalLog('leave', { roomId, peerId, count });
+    broadcast(roomId, { type: 'peer-left', peerId, count }, peerId);
+    socket.meta = null;
+  }
+
+  wss.on('connection', (socket: SignalWebSocket, req: http.IncomingMessage) => {
+    const origin = req.headers.origin;
+    if (!isAllowedOrigin(origin, req.headers.host, allowedList)) {
+      signalLog('rejected-ws-origin', { origin, host: req.headers.host });
+      socket.close(4403, 'Forbidden origin');
+      return;
+    }
+
+    socket.on('message', (raw) => {
+      let message: any;
+      try {
+        message = JSON.parse(raw.toString());
+      } catch {
+        send(socket, { type: 'error', message: 'Mensagem inválida.' });
+        return;
+      }
+
+      try {
+        if (message.type === 'join') {
+          depart(socket);
+          const peers = rooms.join(message.roomId, message.peerId);
+          socket.meta = {
+            roomId: String(message.roomId).trim().toLowerCase(),
+            peerId: String(message.peerId).trim(),
+          };
+          clients.set(`${socket.meta.roomId}:${socket.meta.peerId}`, socket);
+          const count = rooms.peers(socket.meta.roomId).length;
+          signalLog('join', { roomId: socket.meta.roomId, peerId: socket.meta.peerId, count });
+          send(socket, { type: 'peers', peers, count });
+          broadcast(socket.meta.roomId, { type: 'peer-joined', peerId: socket.meta.peerId, count }, socket.meta.peerId);
+          return;
+        }
+
+        if (message.type === 'signal' && socket.meta && typeof message.target === 'string') {
+          const target = peerSocket(socket.meta.roomId, message.target);
+          signalLog('relay', {
+            roomId: socket.meta.roomId,
+            from: socket.meta.peerId,
+            to: message.target,
+            type: message.data?.type,
+            delivered: Boolean(target),
+          });
+          if (target) {
+            send(target, { type: 'signal', from: socket.meta.peerId, data: message.data });
+          }
+          return;
+        }
+
+        send(socket, { type: 'error', message: 'Ação não permitida.' });
+      } catch (error: any) {
+        send(socket, { type: 'error', message: error?.message || 'Erro inesperado' });
+      }
+    });
+
+    socket.on('close', () => depart(socket));
+  });
+
+  const ready = new Promise<void>((resolve) => httpServer.listen(port, host, () => resolve()));
+
+  return {
+    ready,
+    get port() {
+      const address = httpServer.address();
+      return typeof address === 'object' && address ? address.port : port;
+    },
+    httpServer,
+    wss,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of wss.clients) socket.terminate();
+        wss.close(() => httpServer.close(() => resolve()));
+      }),
+  };
+}

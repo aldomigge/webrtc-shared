@@ -1,13 +1,22 @@
 {
-  "name": "screen-room-webrtc",
+  "name": "screen-room-workspace",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter @screen-room/web dev",
+    "dev:signaling": "pnpm --filter @screen-room/signaling dev",
+    "build": "pnpm --recursive build",
+    "test": "node --test test/*.test.js && pnpm --recursive --filter \"./packages/*\" --filter \"./apps/*\" --if-present test",
+    "test:legacy": "node --test test/*.test.js",
+    "typecheck": "pnpm --recursive typecheck",
+    "start": "pnpm --filter @screen-room/signaling start"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.8.2",
     "ws": "^8.18.0"
   }
 }
