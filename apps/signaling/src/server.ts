@@ -1,7 +1,4 @@
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomRegistry } from './room-state.js';
 import { turnCredentials } from './turn.js';
@@ -18,16 +15,6 @@ export type SignalWebSocket = WebSocket & {
   meta?: SignalSocketMeta | null;
 };
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const defaultPublicDir = path.resolve(here, '../../../public');
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-};
-
 function signalLog(event: string, fields: Record<string, unknown> = {}) {
   console.log(`[screen-room:signal] ${event}`, fields);
 }
@@ -41,7 +28,6 @@ function send(socket: WebSocket | undefined, message: ServerMessage | Record<str
 export interface SignalServerOptions {
   port?: number;
   host?: string;
-  publicDir?: string;
   allowedOrigins?: string[];
 }
 
@@ -88,7 +74,6 @@ export interface SignalServerInstance {
 export function createSignalServer({
   port = 3000,
   host = '0.0.0.0',
-  publicDir = defaultPublicDir,
   allowedOrigins,
 }: SignalServerOptions = {}): SignalServerInstance {
   const rooms = new RoomRegistry();
@@ -139,23 +124,14 @@ export function createSignalServer({
       return;
     }
 
-    let pathname = url.pathname === '/' ? '/index.html' : url.pathname;
-    pathname = path.normalize(pathname).replace(/^([.][.][\\/])+/, '');
-    const file = path.join(publicDir, pathname);
-    if (!file.startsWith(publicDir)) {
-      res.writeHead(403);
-      res.end('Forbidden');
+    if (url.pathname === '/healthz' || url.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'ok', service: 'signaling' }));
       return;
     }
 
-    try {
-      const body = await readFile(file);
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
-      res.end(body);
-    } catch {
-      res.writeHead(404);
-      res.end('Not found');
-    }
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Not found');
   });
 
   const wss = new WebSocketServer({ server: httpServer, path: '/signal' });

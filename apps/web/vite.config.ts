@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
+import { nitro } from 'nitro/vite';
 import viteReact from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [
     tanstackStart(),
+    nitro(),
     viteReact(),
   ],
   server: {
@@ -18,5 +20,9 @@ export default defineConfig({
         target: 'http://127.0.0.1:3000',
       },
     },
+  },
+  preview: {
+    port: Number(process.env.PORT) || 3001,
+    host: process.env.HOST || '0.0.0.0',
   },
 });

@@ -2,16 +2,18 @@
   "name": "screen-room-workspace",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@12.6.0",
   "type": "module",
   "scripts": {
     "dev": "pnpm --parallel --filter \"./apps/*\" dev",
     "dev:web": "pnpm --filter @screen-room/web dev",
     "dev:signaling": "pnpm --filter @screen-room/signaling dev",
     "build": "pnpm --recursive build",
-    "test": "node --test test/*.test.js && pnpm --recursive --filter \"./packages/*\" --filter \"./apps/*\" --if-present test",
-    "test:legacy": "node --test test/*.test.js",
+    "test": "pnpm --recursive --filter \"./packages/*\" --filter \"./apps/*\" test",
     "typecheck": "pnpm --recursive typecheck",
-    "start": "pnpm --filter @screen-room/signaling start"
+    "start:web": "pnpm --filter @screen-room/web start",
+    "start:signaling": "pnpm --filter @screen-room/signaling start",
+    "preview:web": "pnpm --filter @screen-room/web preview"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

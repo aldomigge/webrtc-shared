@@ -10,8 +10,7 @@ Durante testes, abra **Diagnóstico da conexão** na sala. O painel mostra, em t
 No servidor, os logs usam o prefixo `[screen-room:signal]`. Para acompanhar localmente:
 
 ```bash
-cd /root/workspace/screen-room-webrtc
-npm start
+pnpm dev:signaling
 ```
 
 Ao testar com dois navegadores, o fluxo esperado é:

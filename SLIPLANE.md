@@ -1,22 +1,47 @@
 # Configuração Sliplane
 
-## Deploy pelo painel
+A nova arquitetura do Screen Room é composta por dois serviços independentes:
 
-1. Acesse o painel do Sliplane e crie um novo **App Runtime**.
-2. Conecte o repositório GitHub deste projeto.
-3. Selecione deploy por `Dockerfile`.
-4. Use a porta interna `3000`.
-5. Não configure um comando de start adicional: o `CMD` do Dockerfile já executa o servidor.
-6. Faça o deploy.
+1. **`apps/web`**: Aplicação de interface em TanStack Start (SSR) e React.
+2. **`apps/signaling`**: Serviço Node.js para WebSocket de sinalização (`/signal`) e credenciais temporárias TURN (`/turn-credentials`).
 
-O Sliplane fornecerá um endereço HTTPS em um subdomínio `sliplane.app`. Esse endereço já funciona com o WebSocket `/signal`, necessário para a negociação WebRTC.
+Ambos os serviços devem ser expostos sob a mesma origem pública através de roteamento/reverse proxy:
+- `/signal` (WebSocket) -> `apps/signaling`
+- `/turn-credentials` (HTTP) -> `apps/signaling`
+- Todas as demais requisições -> `apps/web`
 
-## Configuração equivalente
+---
 
-- Build: `Dockerfile`
-- Port: `3000`
-- Health check: `/`
-- WebSocket: habilitado automaticamente no App Runtime
-- Variável `PORT`: fornecida pelo Sliplane; o servidor já a utiliza
+## 1. Deploy do Serviço de Sinalização (`apps/signaling`)
 
-Depois do deploy, teste em um computador usando Chrome ou Edge. Para enviar áudio, selecione uma aba no seletor de compartilhamento e marque a opção de áudio.
+1. No painel do Sliplane, crie um novo **App Runtime** (ex.: `screen-room-signaling`).
+2. Conecte o repositório do projeto.
+3. Configure o deploy por Dockerfile:
+   - **Dockerfile path**: `apps/signaling/Dockerfile`
+   - **Context**: `.` (raiz do repositório)
+4. Defina a porta interna: `3000` (ou utilize a variável `PORT` injetada pelo Sliplane).
+5. WebSocket: habilitado automaticamente.
+6. Variáveis de ambiente opcionais:
+   - `ALLOWED_ORIGINS`: origens permitidas (ex.: `https://seu-dominio.com`), se não estiver atrás de proxy com header Host coincidente.
+
+---
+
+## 2. Deploy do Serviço Web (`apps/web`)
+
+1. Crie outro **App Runtime** no Sliplane (ex.: `screen-room-web`).
+2. Conecte o repositório do projeto.
+3. Configure o deploy por Dockerfile:
+   - **Dockerfile path**: `apps/web/Dockerfile`
+   - **Context**: `.` (raiz do repositório)
+4. Defina a porta interna: `3001` (ou utilize a variável `PORT` injetada pelo Sliplane). O container executa o runtime Node oficial do TanStack Start gerado pelo Nitro (`node .output/server/index.mjs`).
+
+---
+
+## 3. Roteamento sob a Mesma Origem
+
+Para que o frontend acesse o signaling e o TURN de forma transparente via URLs relativas (`/signal` e `/turn-credentials`):
+
+- Configure o balanceador / domínio no Sliplane (ou proxy Caddy/Cloudflare/Nginx na frente dos serviços) roteando:
+  - `/signal*` -> `screen-room-signaling:3000`
+  - `/turn-credentials*` -> `screen-room-signaling:3000`
+  - `/*` -> `screen-room-web:3001`

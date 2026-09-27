@@ -144,3 +144,20 @@ test('signaling: origin policy rejects WebSocket connection from untrusted origi
     }),
   );
 });
+
+test('signaling: returns 200 on /healthz and 404 for unknown HTTP paths', async (t) => {
+  const app = createSignalServer({ port: 0, host: '127.0.0.1' });
+  await app.ready;
+  t.after(() => app.close());
+
+  const healthRes = await fetch(`http://127.0.0.1:${app.port}/healthz`);
+  assert.equal(healthRes.status, 200);
+  const healthData = await healthRes.json();
+  assert.equal(healthData.status, 'ok');
+
+  const notFoundRes = await fetch(`http://127.0.0.1:${app.port}/`);
+  assert.equal(notFoundRes.status, 404);
+
+  const unknownRes = await fetch(`http://127.0.0.1:${app.port}/random-path`);
+  assert.equal(unknownRes.status, 404);
+});
